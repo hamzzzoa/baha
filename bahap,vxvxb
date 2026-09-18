@@ -1,0 +1,608 @@
+--============================================================
+-- KAZU × STRBACK - FINAL ALL-IN-ONE
+-- Veil + Silent Aim V1/V2 + Visualizer + ESP + Misc
+--============================================================
+
+pcall(function()
+    local old = game:GetService("CoreGui"):FindFirstChild("KAZU_FINAL")
+    if old then old:Destroy() end
+    local old2 = game:GetService("CoreGui"):FindFirstChild("KAZU_HUB")
+    if old2 then old2:Destroy() end
+    local old3 = game:GetService("CoreGui"):FindFirstChild("KAZU_SIMPLE")
+    if old3 then old3:Destroy() end
+end)
+
+local P     = game:GetService("Players")
+local RS    = game:GetService("RunService")
+local UIS   = game:GetService("UserInputService")
+local VIM   = game:GetService("VirtualInputManager")
+local REP   = game:GetService("ReplicatedStorage")
+local Tween = game:GetService("TweenService")
+local STA   = game:GetService("StarterGui")
+local LP    = P.LocalPlayer
+local WS    = workspace
+
+-- ============================================================
+-- COLORS
+-- ============================================================
+local COL = {
+    bg = Color3.fromRGB(10, 14, 22),
+    bgPanel = Color3.fromRGB(14, 20, 32),
+    bgCard = Color3.fromRGB(18, 26, 42),
+    bgInput = Color3.fromRGB(22, 32, 52),
+    border = Color3.fromRGB(30, 46, 72),
+    accent = Color3.fromRGB(50, 120, 240),
+    accentHi = Color3.fromRGB(100, 170, 255),
+    text = Color3.fromRGB(220, 230, 245),
+    textDim = Color3.fromRGB(140, 160, 190),
+    green = Color3.fromRGB(80, 220, 120),
+    red = Color3.fromRGB(240, 80, 80),
+    yellow = Color3.fromRGB(250, 200, 70),
+    orange = Color3.fromRGB(250, 160, 60),
+    cyan = Color3.fromRGB(0, 220, 255),
+}
+
+-- ============================================================
+-- CONFIG
+-- ============================================================
+local CFG = {
+    -- Veil
+    Veil = false, VeilTarget = "Torso", VeilFOV = 400,
+    VeilSmooth = 0.35, VeilLead = 1.4,
+    -- Aim V1/V2
+    Aim = false, AimMode = "V1", AimTarget = "Torso",
+    AimLeadV1 = 1.3, AimLeadV2 = 1.5, AimSmooth = 0.25,
+    AimFOV = 400,
+    -- Visualizer
+    ShowFOV = true, ShowMarkers = true, ShowTarget = true,
+    ShowTracer = true, ShowInfo = true, FOV = 400, MaxDist = 500,
+    -- Parry
+    Parry = false, ParryDist = 15, ParryDelay = 50,
+    -- ESP
+    ESP_K = false, ESP_S = false, ESP_G = false,
+    -- Misc
+    Invis = false, Noclip = false, FPSBoost = false,
+}
+
+-- ============================================================
+-- HELPERS
+-- ============================================================
+local function MR()
+    local c = LP.Character
+    return c and c:FindFirstChild("HumanoidRootPart")
+end
+
+local function isKiller(plr)
+    if not plr or plr == LP then return false end
+    if plr.Team then
+        local tn = string.lower(plr.Team.Name)
+        if string.find(tn, "kill") or string.find(tn, "murder") then return true end
+    end
+    local char = plr.Character
+    if char then
+        for _, a in ipairs({"IsKiller","Killer","isKiller"}) do
+            if char:GetAttribute(a) == true then return true end
+        end
+    end
+    return false
+end
+
+local function getInfo(plr, targetPart)
+    local char = plr.Character
+    if not char then return nil end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return nil end
+    local root = char:FindFirstChild(targetPart) or char:FindFirstChild("HumanoidRootPart")
+    if not root then return nil end
+    local cam = WS.CurrentCamera
+    if not cam then return nil end
+    local myRoot = MR()
+    if not myRoot then return nil end
+    local dist = (myRoot.Position - root.Position).Magnitude
+    if dist > CFG.MaxDist then return nil end
+    local sp, onScreen = cam:WorldToViewportPoint(root.Position)
+    if not onScreen then return nil end
+    local vp = cam.ViewportSize
+    local dx = sp.X - vp.X / 2
+    local dy = sp.Y - vp.Y / 2
+    return {
+        plr = plr, char = char, root = root, hum = hum,
+        screenPos = Vector2.new(sp.X, sp.Y),
+        worldPos = root.Position,
+        distFromCenter = math.sqrt(dx*dx + dy*dy),
+        distance = dist,
+        healthPct = math.floor((hum.Health / hum.MaxHealth) * 100),
+    }
+end
+
+-- ============================================================
+-- ROOT
+-- ============================================================
+local gui = Instance.new("ScreenGui")
+gui.Name = "KAZU_FINAL"
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.DisplayOrder = 2147483647
+gui.Enabled = true
+pcall(function() gui.Parent = game:GetService("CoreGui") end)
+if not gui.Parent then gui.Parent = LP:WaitForChild("PlayerGui", 5) end
+
+-- ============================================================
+-- VISUAL LAYER (non-interactive)
+-- ============================================================
+local visLayer = Instance.new("Frame", gui)
+visLayer.Size = UDim2.new(1, 0, 1, 0)
+visLayer.BackgroundTransparency = 1
+visLayer.ZIndex = 1
+visLayer.Active = false
+
+-- FOV circle
+local fovCircle = Instance.new("Frame", visLayer)
+fovCircle.BackgroundTransparency = 1
+fovCircle.AnchorPoint = Vector2.new(0.5, 0.5)
+fovCircle.Position = UDim2.new(0.5, 0, 0.5, 0)
+fovCircle.Size = UDim2.new(0, 800, 0, 800)
+fovCircle.ZIndex = 2
+fovCircle.Active = false
+Instance.new("UICorner", fovCircle).CornerRadius = UDim.new(1, 0)
+local fovStroke = Instance.new("UIStroke", fovCircle)
+fovStroke.Color = COL.cyan
+fovStroke.Thickness = 2
+
+-- Marker pool
+local markers = {}
+for i = 1, 20 do
+    local c = Instance.new("Frame", visLayer)
+    c.BackgroundTransparency = 1
+    c.AnchorPoint = Vector2.new(0.5, 0.5)
+    c.Size = UDim2.new(0, 70, 0, 70)
+    c.Visible = false
+    c.ZIndex = 5
+    c.Active = false
+    local circle = Instance.new("Frame", c)
+    circle.BackgroundTransparency = 1
+    circle.Size = UDim2.new(1, 0, 1, 0)
+    circle.AnchorPoint = Vector2.new(0.5, 0.5)
+    circle.Position = UDim2.new(0.5, 0, 0.5, 0)
+    circle.ZIndex = 6
+    circle.Active = false
+    Instance.new("UICorner", circle).CornerRadius = UDim.new(1, 0)
+    local s = Instance.new("UIStroke", circle)
+    s.Color = Color3.fromRGB(255, 255, 255)
+    s.Thickness = 2
+    local info = Instance.new("TextLabel", c)
+    info.BackgroundTransparency = 1
+    info.Size = UDim2.new(0, 300, 0, 18)
+    info.AnchorPoint = Vector2.new(0.5, 1)
+    info.Position = UDim2.new(0.5, 0, 0, -6)
+    info.Text = ""
+    info.TextColor3 = COL.green
+    info.Font = Enum.Font.GothamBold
+    info.TextSize = 13
+    info.TextStrokeTransparency = 0
+    info.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    info.ZIndex = 7
+    markers[i] = {container = c, stroke = s, info = info}
+end
+
+-- Target marker
+local targetMarker = Instance.new("Frame", visLayer)
+targetMarker.BackgroundTransparency = 1
+targetMarker.AnchorPoint = Vector2.new(0.5, 0.5)
+targetMarker.Size = UDim2.new(0, 90, 0, 90)
+targetMarker.Visible = false
+targetMarker.ZIndex = 8
+targetMarker.Active = false
+local tmCirc = Instance.new("Frame", targetMarker)
+tmCirc.BackgroundTransparency = 1
+tmCirc.Size = UDim2.new(1, 0, 1, 0)
+tmCirc.AnchorPoint = Vector2.new(0.5, 0.5)
+tmCirc.Position = UDim2.new(0.5, 0, 0.5, 0)
+tmCirc.ZIndex = 9
+tmCirc.Active = false
+Instance.new("UICorner", tmCirc).CornerRadius = UDim.new(1, 0)
+local tmStroke = Instance.new("UIStroke", tmCirc)
+tmStroke.Color = COL.red
+tmStroke.Thickness = 3
+
+-- Tracer
+local tracer = Instance.new("Frame", visLayer)
+tracer.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+tracer.BorderSizePixel = 0
+tracer.AnchorPoint = Vector2.new(0, 0.5)
+tracer.Size = UDim2.new(0, 100, 0, 1.5)
+tracer.Visible = false
+tracer.ZIndex = 4
+tracer.BackgroundTransparency = 0.2
+tracer.Active = false
+
+-- ============================================================
+-- MAIN UI
+-- ============================================================
+local main = Instance.new("Frame", gui)
+main.Size = UDim2.new(0, 520, 0, 420)
+main.Position = UDim2.new(0.5, -260, 0.5, -210)
+main.BackgroundColor3 = COL.bg
+main.BorderSizePixel = 0
+main.Active = true
+main.Draggable = true
+main.ClipsDescendants = true
+main.ZIndex = 1000
+main.Selectable = false
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 8)
+
+local stroke = Instance.new("UIStroke", main)
+stroke.Color = COL.border
+stroke.Thickness = 1
+
+-- HEADER
+local header = Instance.new("Frame", main)
+header.Size = UDim2.new(1, 0, 0, 46)
+header.BackgroundColor3 = COL.bgPanel
+header.BorderSizePixel = 0
+header.ZIndex = 1001
+header.Active = true
+Instance.new("UICorner", header).CornerRadius = UDim.new(0, 8)
+
+local hFix = Instance.new("Frame", header)
+hFix.Size = UDim2.new(1, 0, 0, 10)
+hFix.Position = UDim2.new(0, 0, 1, -10)
+hFix.BackgroundColor3 = COL.bgPanel
+hFix.BorderSizePixel = 0
+hFix.ZIndex = 1001
+hFix.Active = false
+
+local logoK = Instance.new("TextLabel", header)
+logoK.Size = UDim2.new(0, 30, 0, 30)
+logoK.Position = UDim2.new(0, 12, 0, 8)
+logoK.BackgroundTransparency = 1
+logoK.Text = "K"
+logoK.TextColor3 = COL.accentHi
+logoK.Font = Enum.Font.GothamBlack
+logoK.TextSize = 22
+logoK.ZIndex = 1002
+logoK.Active = false
+
+local titleL = Instance.new("TextLabel", header)
+titleL.Size = UDim2.new(0, 300, 0, 20)
+titleL.Position = UDim2.new(0, 48, 0, 8)
+titleL.BackgroundTransparency = 1
+titleL.Text = "KAZU × STRBACK"
+titleL.TextColor3 = COL.text
+titleL.Font = Enum.Font.GothamBold
+titleL.TextSize = 13
+titleL.TextXAlignment = Enum.TextXAlignment.Left
+titleL.ZIndex = 1002
+titleL.Active = false
+
+local subL = Instance.new("TextLabel", header)
+subL.Size = UDim2.new(0, 300, 0, 14)
+subL.Position = UDim2.new(0, 48, 0, 26)
+subL.BackgroundTransparency = 1
+subL.Text = "Veil + Aim V1/V2 + Viz"
+subL.TextColor3 = COL.textDim
+subL.Font = Enum.Font.Gotham
+subL.TextSize = 9
+subL.TextXAlignment = Enum.TextXAlignment.Left
+subL.ZIndex = 1002
+subL.Active = false
+
+-- X BUTTON (ZIndex max + Active)
+local closeBtn = Instance.new("TextButton", header)
+closeBtn.Size = UDim2.new(0, 30, 0, 30)
+closeBtn.Position = UDim2.new(1, -40, 0, 8)
+closeBtn.BackgroundColor3 = COL.red
+closeBtn.Text = "×"
+closeBtn.TextColor3 = Color3.new(1, 1, 1)
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.TextSize = 22
+closeBtn.BorderSizePixel = 0
+closeBtn.ZIndex = 2000
+closeBtn.Active = true
+closeBtn.AutoButtonColor = true
+closeBtn.Selectable = true
+Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 6)
+
+-- TAB BAR (manual position)
+local tabBar = Instance.new("Frame", main)
+tabBar.Size = UDim2.new(1, 0, 0, 32)
+tabBar.Position = UDim2.new(0, 0, 0, 46)
+tabBar.BackgroundColor3 = COL.bgPanel
+tabBar.BorderSizePixel = 0
+tabBar.ZIndex = 1001
+tabBar.Active = true
+
+local tabButtons = {}
+local tabNames = {"Veil", "Aim", "Viz", "Misc"}
+
+for i = 1, 4 do
+    local btn = Instance.new("TextButton", tabBar)
+    btn.Size = UDim2.new(0.25, -2, 1, -2)
+    btn.Position = UDim2.new((i - 1) * 0.25, 1, 0, 1)
+    btn.BackgroundColor3 = COL.bgCard
+    btn.BackgroundTransparency = 0.4
+    btn.Text = tabNames[i]
+    btn.TextColor3 = COL.textDim
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 11
+    btn.BorderSizePixel = 0
+    btn.ZIndex = 1002
+    btn.AutoButtonColor = false
+    btn.Active = true
+    btn.Selectable = true
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
+    tabButtons[i] = btn
+end
+
+-- CONTENT AREA
+local content = Instance.new("Frame", main)
+content.Size = UDim2.new(1, 0, 1, -78)
+content.Position = UDim2.new(0, 0, 0, 78)
+content.BackgroundTransparency = 1
+content.BorderSizePixel = 0
+content.ZIndex = 1000
+content.ClipsDescendants = true
+content.Active = true
+
+-- PAGES
+local pageVeil = Instance.new("Frame", content)
+pageVeil.Size = UDim2.new(1, 0, 1, 0)
+pageVeil.BackgroundTransparency = 1
+pageVeil.Visible = true
+pageVeil.ZIndex = 1001
+pageVeil.Active = true
+
+local pageAim = Instance.new("Frame", content)
+pageAim.Size = UDim2.new(1, 0, 1, 0)
+pageAim.BackgroundTransparency = 1
+pageAim.Visible = false
+pageAim.ZIndex = 1001
+pageAim.Active = true
+
+local pageViz = Instance.new("Frame", content)
+pageViz.Size = UDim2.new(1, 0, 1, 0)
+pageViz.BackgroundTransparency = 1
+pageViz.Visible = false
+pageViz.ZIndex = 1001
+pageViz.Active = true
+
+local pageMisc = Instance.new("Frame", content)
+pageMisc.Size = UDim2.new(1, 0, 1, 0)
+pageMisc.BackgroundTransparency = 1
+pageMisc.Visible = false
+pageMisc.ZIndex = 1001
+pageMisc.Active = true
+
+-- ============================================================
+-- HELPERS
+-- ============================================================
+local function makeToggle(parent, text, initial, cb, y)
+    local row = Instance.new("Frame", parent)
+    row.Size = UDim2.new(1, -20, 0, 32)
+    row.Position = UDim2.new(0, 10, 0, y)
+    row.BackgroundColor3 = COL.bgCard
+    row.BackgroundTransparency = 0.3
+    row.BorderSizePixel = 0
+    row.ZIndex = 1002
+    row.Active = true
+    Instance.new("UICorner", row).CornerRadius = UDim.new(0, 4)
+
+    local cbx = Instance.new("Frame", row)
+    cbx.Size = UDim2.new(0, 18, 0, 18)
+    cbx.Position = UDim2.new(0, 10, 0.5, -9)
+    cbx.BackgroundColor3 = COL.bgInput
+    cbx.BorderSizePixel = 0
+    cbx.ZIndex = 1003
+    cbx.Active = false
+    Instance.new("UICorner", cbx).CornerRadius = UDim.new(0, 3)
+    local cbs = Instance.new("UIStroke", cbx)
+    cbs.Color = initial and COL.accentHi or COL.border
+    cbs.Thickness = 1
+
+    local cm = Instance.new("TextLabel", cbx)
+    cm.Size = UDim2.new(1, 0, 1, 0)
+    cm.BackgroundTransparency = 1
+    cm.Text = "✓"
+    cm.TextColor3 = COL.accentHi
+    cm.Font = Enum.Font.GothamBold
+    cm.TextSize = 13
+    cm.Visible = initial
+    cm.ZIndex = 1004
+    cm.Active = false
+
+    local lbl = Instance.new("TextLabel", row)
+    lbl.Size = UDim2.new(1, -44, 1, 0)
+    lbl.Position = UDim2.new(0, 34, 0, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = text
+    lbl.TextColor3 = initial and COL.text or COL.textDim
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextSize = 11
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.ZIndex = 1003
+    lbl.Active = false
+
+    local btn = Instance.new("TextButton", row)
+    btn.Size = UDim2.new(1, 0, 1, 0)
+    btn.BackgroundTransparency = 1
+    btn.Text = ""
+    btn.ZIndex = 1010
+    btn.Active = true
+    btn.Selectable = true
+
+    local state = initial
+    btn.MouseButton1Click:Connect(function()
+        state = not state
+        cm.Visible = state
+        lbl.TextColor3 = state and COL.text or COL.textDim
+        cbs.Color = state and COL.accentHi or COL.border
+        if cb then pcall(cb, state) end
+    end)
+end
+
+local function makeSlider(parent, label, minV, maxV, initV, cb, y, isFloat)
+    local row = Instance.new("Frame", parent)
+    row.Size = UDim2.new(1, -20, 0, 44)
+    row.Position = UDim2.new(0, 10, 0, y)
+    row.BackgroundColor3 = COL.bgCard
+    row.BackgroundTransparency = 0.3
+    row.BorderSizePixel = 0
+    row.ZIndex = 1002
+    row.Active = true
+    Instance.new("UICorner", row).CornerRadius = UDim.new(0, 4)
+
+    local lbl = Instance.new("TextLabel", row)
+    lbl.Size = UDim2.new(1, -16, 0, 14)
+    lbl.Position = UDim2.new(0, 10, 0, 4)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = label
+    lbl.TextColor3 = COL.textDim
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextSize = 10
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.ZIndex = 1003
+    lbl.Active = false
+
+    local track = Instance.new("Frame", row)
+    track.Size = UDim2.new(1, -20, 0, 16)
+    track.Position = UDim2.new(0, 10, 0, 22)
+    track.BackgroundColor3 = COL.bgInput
+    track.BorderSizePixel = 0
+    track.ZIndex = 1003
+    track.Active = false
+    Instance.new("UICorner", track).CornerRadius = UDim.new(0, 3)
+    local ts = Instance.new("UIStroke", track)
+    ts.Color = COL.border
+    ts.Thickness = 1
+
+    local initRel = (initV - minV) / (maxV - minV)
+    local fill = Instance.new("Frame", track)
+    fill.Size = UDim2.new(initRel, 0, 1, 0)
+    fill.BackgroundColor3 = COL.accent
+    fill.BorderSizePixel = 0
+    fill.ZIndex = 1004
+    fill.Active = false
+    Instance.new("UICorner", fill).CornerRadius = UDim.new(0, 3)
+
+    local valueL = Instance.new("TextLabel", track)
+    valueL.Size = UDim2.new(1, -8, 1, 0)
+    valueL.BackgroundTransparency = 1
+    valueL.Text = (isFloat and string.format("%.2f", initV) or tostring(initV)) .. "/" .. tostring(maxV)
+    valueL.TextColor3 = COL.text
+    valueL.Font = Enum.Font.GothamBold
+    valueL.TextSize = 10
+    valueL.TextXAlignment = Enum.TextXAlignment.Right
+    valueL.ZIndex = 1005
+    valueL.Active = false
+
+    -- Invisible button buat handle drag
+    local dragBtn = Instance.new("TextButton", track)
+    dragBtn.Size = UDim2.new(1, 0, 1, 0)
+    dragBtn.BackgroundTransparency = 1
+    dragBtn.Text = ""
+    dragBtn.ZIndex = 1010
+    dragBtn.Active = true
+    dragBtn.Selectable = true
+
+    local dragging = false
+    local function update(xPos)
+        local rel = (xPos - track.AbsolutePosition.X) / track.AbsoluteSize.X
+        rel = math.clamp(rel, 0, 1)
+        local v = minV + (maxV - minV) * rel
+        if isFloat then v = math.floor(v * 100) / 100
+        else v = math.floor(v) end
+        fill.Size = UDim2.new(rel, 0, 1, 0)
+        valueL.Text = (isFloat and string.format("%.2f", v) or tostring(v)) .. "/" .. tostring(maxV)
+        if cb then pcall(cb, v) end
+    end
+
+    dragBtn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            update(input.Position.X)
+        end
+    end)
+    dragBtn.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+    UIS.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            update(input.Position.X)
+        end
+    end)
+end
+
+local function makeDropdown(parent, label, options, initValue, cb, y)
+    local row = Instance.new("Frame", parent)
+    row.Size = UDim2.new(1, -20, 0, 46)
+    row.Position = UDim2.new(0, 10, 0, y)
+    row.BackgroundColor3 = COL.bgCard
+    row.BackgroundTransparency = 0.3
+    row.BorderSizePixel = 0
+    row.ZIndex = 1002
+    row.Active = true
+    Instance.new("UICorner", row).CornerRadius = UDim.new(0, 4)
+
+    local lbl = Instance.new("TextLabel", row)
+    lbl.Size = UDim2.new(1, -16, 0, 14)
+    lbl.Position = UDim2.new(0, 10, 0, 4)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = label
+    lbl.TextColor3 = COL.textDim
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextSize = 10
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.ZIndex = 1003
+    lbl.Active = false
+
+    local dd = Instance.new("Frame", row)
+    dd.Size = UDim2.new(1, -20, 0, 20)
+    dd.Position = UDim2.new(0, 10, 0, 22)
+    dd.BackgroundColor3 = COL.bgInput
+    dd.BorderSizePixel = 0
+    dd.ZIndex = 1003
+    dd.Active = false
+    Instance.new("UICorner", dd).CornerRadius = UDim.new(0, 3)
+    local ds = Instance.new("UIStroke", dd)
+    ds.Color = COL.border
+    ds.Thickness = 1
+
+    local vL = Instance.new("TextLabel", dd)
+    vL.Size = UDim2.new(1, -28, 1, 0)
+    vL.Position = UDim2.new(0, 10, 0, 0)
+    vL.BackgroundTransparency = 1
+    vL.Text = initValue
+    vL.TextColor3 = COL.text
+    vL.Font = Enum.Font.Gotham
+    vL.TextSize = 10
+    vL.TextXAlignment = Enum.TextXAlignment.Left
+    vL.ZIndex = 1004
+    vL.Active = false
+
+    local arr = Instance.new("TextLabel", dd)
+    arr.Size = UDim2.new(0, 20, 1, 0)
+    arr.Position = UDim2.new(1, -22, 0, 0)
+    arr.BackgroundTransparency = 1
+    arr.Text = "▼"
+    arr.TextColor3 = COL.textDim
+    arr.Font = Enum.Font.GothamBold
+    arr.TextSize = 10
+    arr.ZIndex = 1004
+    arr.Active = false
+
+    local btn = Instance.new("TextButton", dd)
+    btn.Size = UDim2.new(1, 0, 1, 0)
+    btn.BackgroundTransparency = 1
+    btn.Text = ""
+    btn.ZIndex = 1010
+    btn.Active = true
+    btn.Selectable = true
+
+    local idx = 1
+    for i, opt in ipairs(options) do
+        if opt == initValue then idx = i break end
+    end
+
+ 
